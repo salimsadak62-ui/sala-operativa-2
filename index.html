@@ -6,7 +6,7 @@
 <title>Sala Operativa</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-  /* Layout: una colonna da telefono. Verdetto in alto, grafico, poi i 10 agenti in ordine di lavoro. */
+  /* Layout: una colonna da telefono. Verdetto in alto, grafico, poi gli 11 agenti in ordine di lavoro. */
   :root {
     --bg: #0b0f17;
     --surface: #141c2b;
@@ -125,6 +125,13 @@
   .meter.single::after { display: none; }
   .agent-note { margin: 7px 0 0 1.4rem; font-size: 0.82rem; color: var(--muted); }
 
+  /* Widget Agente 11 (TradingView + Tradays) */
+  .widget-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .widget-tabs button { padding: 8px 10px; font-size: 0.82rem; border-radius: 10px; background: var(--surface-2); }
+  .widget-tabs button.active { background: var(--accent); color: #fff; border-color: transparent; }
+  .widget-frame { margin-top: 10px; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--surface-2); }
+  .widget-frame iframe { display: block; width: 100%; border: 0; }
+
   details { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 0 14px; }
   summary { cursor: pointer; padding: 12px 0; font-weight: 600; font-size: 0.9rem; }
   details .inner { padding-bottom: 14px; display: grid; gap: 10px; }
@@ -217,6 +224,26 @@
     <div class="agents" id="directors"></div>
     <div class="group-title" style="margin-top:14px">Decisore</div>
     <div class="agents" id="decider"></div>
+
+    <div class="group-title" style="margin-top:14px">Supporto &amp; Strumenti</div>
+    <div class="agent" id="agent11">
+      <div class="agent-top">
+        <span class="agent-n">11</span>
+        <span class="agent-name">TradingView &amp; Tradays</span>
+        <span class="chip buy">LIVE</span>
+      </div>
+      <p class="agent-note">Grafico TradingView sincronizzato con lo strumento scelto e calendario economico Tradays per verificare le notizie ad alto impatto.</p>
+      <div class="widget-tabs" role="tablist">
+        <button type="button" id="tabTv" class="active">Grafico TradingView</button>
+        <button type="button" id="tabTradays">Calendario Tradays</button>
+      </div>
+      <div class="widget-frame" id="panelTv">
+        <iframe id="tvFrame" height="320" loading="lazy" title="Grafico TradingView"></iframe>
+      </div>
+      <div class="widget-frame" id="panelTradays" hidden>
+        <iframe id="tradaysFrame" height="360" loading="lazy" title="Calendario Economico Tradays"></iframe>
+      </div>
+    </div>
   </section>
 
   <section class="card" aria-label="Test sullo storico">
@@ -351,7 +378,7 @@ function agentTrend(ctx, I) {
 /* ---------- Agente 3: Momentum (RSI) ---------- */
 function agentMomentum(ctx, I) {
   const n = ctx.candles.length - 1;
-  const r = I.rsi[n], r3 = I.rsi[n - 3];
+  const r = I.rsi[n], r3 = n >= 3 ? I.rsi[n - 3] : null;
   let score = clamp((r - 50) / 20, -1, 1);
   let txt = `RSI ${r.toFixed(1)}`;
   if (r > 70) { score = 0.2; txt += ': ipercomprato, la spinta può esaurirsi'; }
@@ -416,7 +443,7 @@ function agentNews(ctx) {
   const min = p.h * 60 + p.m;
   if (p.wd === 'Fri' && p.day <= 7 && Math.abs(min - (14 * 60 + 30)) <= 60)
     return { ...base, status: 'block', note: 'Primo venerdì del mese, finestra del dato NFP (14:30): evita di operare.' };
-  return { ...base, status: 'ok', note: 'Nessun evento noto in questo momento. Il calendario non è collegato: controlla BCE, Fed e NFP e usa l\'interruttore in fondo.' };
+  return { ...base, status: 'ok', note: 'Nessun evento noto in questo momento. Controlla il calendario Tradays nell\'Agente 11 e usa l\'interruttore in fondo.' };
 }
 
 /* ---------- Agente 7: Orari ---------- */
@@ -511,12 +538,10 @@ function runTeam(ctx) {
   return { A, d, I };
 }
 
-
 /* ---------- Test sullo storico ---------- */
 const BT_GRID = { minScore: [25, 35, 45, 55], minGap: [10, 20, 30] };
 const BT_WINDOW = 300, BT_START = 100, BT_HORIZON = 96;
 
-/* Calcola gli agenti a ogni chiusura di candela, usando solo i dati fino a quel momento. */
 async function btPrecompute(candles, asset, tf, settings, onProgress) {
   const step = (tf === 'M15' ? 15 : 30) * 60000, rows = [];
   for (let i = BT_START; i < candles.length; i++) {
@@ -529,7 +554,6 @@ async function btPrecompute(candles, asset, tf, settings, onProgress) {
   return rows;
 }
 
-/* Una operazione alla volta: stop e target controllati candela per candela. Se nella stessa candela scattano entrambi, vale lo stop. */
 function btSimulate(rows, candles, settings, cfg, spread) {
   const trades = []; let busyUntil = -1;
   for (const row of rows) {
@@ -630,7 +654,9 @@ function parseCandles(text, stepMs) {
 /* ============ INTERFACCIA ============ */
 const $ = (id) => document.getElementById(id);
 const SYM = { 'EUR/USD': 'EURUSDT', 'XAU/USD': 'PAXGUSDT' };
+const TV_SYM = { 'EUR/USD': 'FX:EURUSD', 'XAU/USD': 'OANDA:XAUUSD' };
 const IV = { M15: '15m', M30: '30m' };
+const TV_IV = { M15: '15', M30: '30' };
 const state = { asset: 'EUR/USD', tf: 'M15', source: 'live', seed: 1, candles: [], kind: 'sample',
   settings: { capital: 300, lots: 0.01, maxRisk: 2, news: false } };
 
@@ -640,6 +666,61 @@ function save() { try { localStorage.setItem('sala-op', JSON.stringify({ setting
 const stepMs = () => (state.tf === 'M15' ? 15 : 30) * 60000;
 const dig = () => (state.asset === 'EUR/USD' ? 5 : 2);
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+/* ---------- Aggiornamento Widget Agente 11 (TradingView + Tradays) ---------- */
+function isDarkTheme() {
+  const forced = document.documentElement.getAttribute('data-theme');
+  if (forced === 'light') return false;
+  if (forced === 'dark') return true;
+  return !window.matchMedia || !window.matchMedia('(prefers-color-scheme: light)').matches;
+}
+
+function updateAgent11Widgets() {
+  const dark = isDarkTheme();
+  const tvTheme = dark ? 'dark' : 'light';
+  const tvParams = new URLSearchParams({
+    symbol: TV_SYM[state.asset],
+    interval: TV_IV[state.tf],
+    timezone: 'Europe/Rome',
+    theme: tvTheme,
+    style: '1',
+    locale: 'it',
+    hide_top_toolbar: '0',
+    hide_side_toolbar: '1',
+    allow_symbol_change: '0',
+    save_image: '0',
+    calendar: '0',
+    support_host: 'https://www.tradingview.com'
+  });
+  const tvUrl = `https://s.tradingview.com/widgetembed/?${tvParams.toString()}`;
+  const tvFrame = $('tvFrame');
+  if (tvFrame.dataset.src !== tvUrl) {
+    tvFrame.dataset.src = tvUrl;
+    tvFrame.src = tvUrl;
+  }
+
+  const tradaysMode = dark ? '1' : '0';
+  const tradaysUrl = `https://www.tradays.com/it/economic-calendar/widget?mode=${tradaysMode}&utm_source=sala-operativa`;
+  const tradaysFrame = $('tradaysFrame');
+  if (tradaysFrame.dataset.src !== tradaysUrl) {
+    tradaysFrame.dataset.src = tradaysUrl;
+    tradaysFrame.src = tradaysUrl;
+  }
+}
+
+$('tabTv').addEventListener('click', () => {
+  $('tabTv').classList.add('active');
+  $('tabTradays').classList.remove('active');
+  $('panelTv').hidden = false;
+  $('panelTradays').hidden = true;
+});
+
+$('tabTradays').addEventListener('click', () => {
+  $('tabTradays').classList.add('active');
+  $('tabTv').classList.remove('active');
+  $('panelTradays').hidden = false;
+  $('panelTv').hidden = true;
+});
 
 async function fetchLive() {
   const url = `https://data-api.binance.vision/api/v3/klines?symbol=${SYM[state.asset]}&interval=${IV[state.tf]}&limit=300`;
@@ -658,6 +739,7 @@ function setStatus(text, warn) { const s = $('srcStatus'); s.textContent = text;
 async function refresh(silent) {
   const src = state.source;
   $('pasteBox').hidden = src !== 'paste';
+  updateAgent11Widgets();
   if (src === 'live') {
     if (!silent) setStatus('Carico i prezzi…');
     try {
@@ -782,7 +864,6 @@ $('pasteGo').addEventListener('click', () => refresh());
 $('newsFlag').checked = !!state.settings.news;
 $('newsFlag').addEventListener('change', (e) => { state.settings.news = e.target.checked; save(); render(); });
 
-
 /* ---------- Test sullo storico ---------- */
 const SPREAD_DEFAULT = { 'EUR/USD': 0.00012, 'XAU/USD': 0.3 };
 function setSpreadDefault() { $('spread').value = SPREAD_DEFAULT[state.asset]; }
@@ -892,6 +973,7 @@ setSpreadDefault();
 
 state.candles = makeSample(state.asset, state.tf, state.seed, Date.now());
 state.label = 'Carico i prezzi…';
+updateAgent11Widgets();
 render();
 refresh();
 setInterval(() => { if (state.source === 'live' && document.visibilityState === 'visible') refresh(true); }, 60000);
